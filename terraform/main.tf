@@ -1,100 +1,114 @@
-# Copyright 2022 Google LLC
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#      http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
-# Definition of local variables
-locals {
-  base_apis = [
-    "container.googleapis.com",
-    "monitoring.googleapis.com",
-    "cloudtrace.googleapis.com",
-    "cloudprofiler.googleapis.com"
-  ]
-  memorystore_apis = ["redis.googleapis.com"]
-  cluster_name     = google_container_cluster.my_cluster.name
+provider "aws" {
+  region = "ap-south-1"
 }
 
-# Enable Google Cloud APIs
-module "enable_google_apis" {
-  source  = "terraform-google-modules/project-factory/google//modules/project_services"
-  version = "~> 18.0"
-
-  project_id                  = var.gcp_project_id
-  disable_services_on_destroy = false
-
-  # activate_apis is the set of base_apis and the APIs required by user-configured deployment options
-  activate_apis = concat(local.base_apis, var.memorystore ? local.memorystore_apis : [])
+# VPC
+resource "aws_vpc" "main" {
+  cidr_block = "10.0.0.0/16"
+  tags = {
+    Name = "microservices-vpc"
+  }
 }
 
-# Create GKE cluster
-resource "google_container_cluster" "my_cluster" {
+# Subnet
+resource "aws_subnet" "main" {
+  vpc_id                  = aws_vpc.main.id
+  cidr_block              = "10.0.1.0/24"
+  map_public_ip_on_launch = true
+  availability_zone       = "ap-south-1a"
+  tags = {
+    Name = "microservices-subnet"
+  }
+}
 
-  name     = var.name
-  location = var.region
+# Internet Gateway
+resource "aws_internet_gateway" "main" {
+  vpc_id = aws_vpc.main.id
+  tags = {
+    Name = "microservices-igw"
+  }
+}
 
-  # Enable autopilot for this cluster
-  enable_autopilot = true
+# Route Table
+resource "aws_route_table" "main" {
+  vpc_id = aws_vpc.main.id
+  route {
+    cidr_block = "0.0.0.0/0"
+    gateway_id = aws_internet_gateway.main.id
+  }
+  tags = {
+    Name = "microservices-rt"
+  }
+}
 
-  # Set an empty ip_allocation_policy to allow autopilot cluster to spin up correctly
-  ip_allocation_policy {
+resource "aws_route_table_association" "main" {
+  subnet_id      = aws_subnet.main.id
+  route_table_id = aws_route_table.main.id
+}
+
+# Security Group
+resource "aws_security_group" "main" {
+  name        = "microservices-sg"
+  description = "Allow traffic for microservices"
+  vpc_id      = aws_vpc.main.id
+
+  ingress {
+    from_port   = 22
+    to_port     = 22
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+    description = "SSH"
   }
 
-  # Avoid setting deletion_protection to false
-  # until you're ready (and certain you want) to destroy the cluster.
-  # deletion_protection = false
-
-  depends_on = [
-    module.enable_google_apis
-  ]
-}
-
-# Get credentials for cluster
-module "gcloud" {
-  source  = "terraform-google-modules/gcloud/google"
-  version = "~> 4.0"
-
-  platform              = "linux"
-  additional_components = ["kubectl", "beta"]
-
-  create_cmd_entrypoint = "gcloud"
-  # Module does not support explicit dependency
-  # Enforce implicit dependency through use of local variable
-  create_cmd_body = "container clusters get-credentials ${local.cluster_name} --zone=${var.region} --project=${var.gcp_project_id}"
-}
-
-# Apply YAML kubernetes-manifest configurations
-resource "null_resource" "apply_deployment" {
-  provisioner "local-exec" {
-    interpreter = ["bash", "-exc"]
-    command     = "kubectl apply -k ${var.filepath_manifest} -n ${var.namespace}"
+  ingress {
+    from_port   = 80
+    to_port     = 80
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+    description = "HTTP"
   }
 
-  depends_on = [
-    module.gcloud
-  ]
-}
-
-# Wait condition for all Pods to be ready before finishing
-resource "null_resource" "wait_conditions" {
-  provisioner "local-exec" {
-    interpreter = ["bash", "-exc"]
-    command     = <<-EOT
-    kubectl wait --for=condition=AVAILABLE apiservice/v1beta1.metrics.k8s.io --timeout=180s
-    kubectl wait --for=condition=ready pods --all -n ${var.namespace} --timeout=280s
-    EOT
+  ingress {
+    from_port   = 8080
+    to_port     = 8080
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+    description = "App port"
   }
 
-  depends_on = [
-    resource.null_resource.apply_deployment
-  ]
+  ingress {
+    from_port   = 30000
+    to_port     = 32767
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+    description = "Kubernetes NodePort range"
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = {
+    Name = "microservices-sg"
+  }
+}
+
+# EC2 Instance
+resource "aws_instance" "main" {
+  ami                    = "ami-0f58b397bc5c1f2e8"
+  instance_type          = "t3.micro"
+  subnet_id              = aws_subnet.main.id
+  vpc_security_group_ids = [aws_security_group.main.id]
+  key_name               = var.key_name
+
+  root_block_device {
+    volume_size = 20
+  }
+
+  tags = {
+    Name = "microservices-server"
+  }
 }
