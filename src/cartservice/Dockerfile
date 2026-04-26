@@ -1,6 +1,6 @@
-# Custom Dockerfile for CartService by eraj22
+# Custom Dockerfile for CartService - maintained by eraj22
 ARG BUILDPLATFORM=linux/amd64
-FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:8.0 AS builder
+FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:10.0 AS builder
 ARG TARGETARCH=amd64
 WORKDIR /app
 COPY src/cartservice.csproj .
@@ -13,7 +13,7 @@ RUN dotnet publish cartservice.csproj \
     -c release \
     -o /cartservice
 
-FROM mcr.microsoft.com/dotnet/runtime-deps:8.0
+FROM mcr.microsoft.com/dotnet/runtime-deps:10.0
 WORKDIR /app
 COPY --from=builder /cartservice .
 EXPOSE 7070
