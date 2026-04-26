@@ -1,0 +1,55 @@
+---
+- name: Configure EC2 for Microservices
+  hosts: microservices
+  become: yes
+
+  tasks:
+    - name: Update apt packages
+      apt:
+        update_cache: yes
+
+    - name: Install required packages
+      apt:
+        name:
+          - docker.io
+          - curl
+          - wget
+          - git
+          - snapd
+        state: present
+
+    - name: Start and enable Docker
+      systemd:
+        name: docker
+        state: started
+        enabled: yes
+
+    - name: Add ubuntu user to docker group
+      user:
+        name: ubuntu
+        groups: docker
+        append: yes
+
+    - name: Install microk8s
+      snap:
+        name: microk8s
+        classic: yes
+
+    - name: Add ubuntu user to microk8s group
+      user:
+        name: ubuntu
+        groups: microk8s
+        append: yes
+
+    - name: Wait for microk8s to be ready
+      command: microk8s status --wait-ready
+      timeout: 120
+
+    - name: Enable microk8s DNS
+      command: microk8s enable dns
+
+    - name: Enable microk8s registry
+      command: microk8s enable registry
+
+    - name: Create kubectl alias
+      shell: echo "alias kubectl='microk8s kubectl'" >> /home/ubuntu/.bashrc
