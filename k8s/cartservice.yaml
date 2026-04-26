@@ -15,7 +15,7 @@ spec:
     spec:
       containers:
       - name: cartservice
-        image: gcr.io/google-samples/microservices-demo/cartservice:v0.10.1
+        image: eraj222/cartservice:daad5de1ec94ed3fae08a4490bcf3a9ca56dc49f
         ports:
         - containerPort: 7070
         env:
